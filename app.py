@@ -150,7 +150,7 @@ def format_countdown(countdown_str: str) -> str:
 def extract_expiry_date(page_source: str) -> str:
     patterns = [
         r"[Ee]xpires\s*[:\-]?\s*(\d{4}/\d{2}/\d{2})",   # Expires 2026/07/07
-        r"[Ee]xpires\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",   # Expires 07/07/2026 (DD/MM/YYYY)
+        r"[Ee]xpires\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",   # Expires 07/07/2026 (MM/DD/YYYY)
         r"(\d{4}/\d{2}/\d{2})\s*[\-–]\s*renew",        # 2026/07/07 - renew
         r"(\d{2}/\d{2}/\d{4})\s*[\-–]\s*renew",        # 07/07/2026 - renew
     ]
@@ -158,11 +158,12 @@ def extract_expiry_date(page_source: str) -> str:
         match = re.search(pattern, page_source)
         if match:
             date_str = match.group(1)
-            # 如果是 DD/MM/YYYY 格式，转换为 YYYY/MM/DD
-            if len(date_str.split('/')[-1]) == 4:  # 最后一部分是4位年份
+            # 如果是 MM/DD/YYYY 格式，转换为 YYYY/MM/DD
+            if len(date_str.split('/')[-1]) == 4:  # 年份长度4
                 parts = date_str.split('/')
-                if len(parts[0]) == 2:  # 第一部分是2位，说明是 DD/MM/YYYY
-                    return f"{parts[2]}/{parts[1]}/{parts[0]}"
+                if len(parts[0]) == 2:  # 第一部分是2位（月）
+                    # 修正：将 MM/DD/YYYY 转为 YYYY/MM/DD
+                    return f"{parts[2]}/{parts[0]}/{parts[1]}"
             return date_str
     return None
 
