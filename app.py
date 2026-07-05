@@ -12,6 +12,7 @@ GH_TOKEN      = os.environ.get("GH_TOKEN") or ""               # GitHub PAT toke
 TG_CHAT_ID    = os.environ.get("TG_CHAT_ID") or ""             # TG chat id,不填写不通知，需和bot token一起填写生效
 TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN") or ""           # TG bot token
 GITHUB_REPO   = os.environ.get("GITHUB_REPOSITORY") or ""      # GitHub 仓库名（Actions 自动注入）
+CURRENT_IP    = ""                                                # 当前出口IP（运行时获取）
 
 if not SESSION_TOKEN :
     print("ℹ️ 未配置 SESSION_TOKEN,脚本终止。")
@@ -101,20 +102,12 @@ def send_telegram_photo(caption: str, photo_path: str):
 # 通知格式
 def format_notification(status: str, extra: str = "", error: str = "", expiry_date: str = "") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if '@' in EMAIL:
-        name, domain = EMAIL.split('@', 1)
-        if len(name) > 4:
-            masked_email = f"{name[:2]}****{name[-2:]}@{domain}"
-        else:
-            masked_email = f"{name}@{domain}"
-    else:
-        masked_email = EMAIL[:2] + '****' 
     
     lines = [
         "🇫🇮 Bot-hosting 续期通知",
         "",
         f"{status}",
-        f"👤 登录账户: {masked_email}",
+        f"👤 登录账户: {EMAIL}",
     ]
     if GITHUB_REPO:
         lines.append(f"📂 仓库: {GITHUB_REPO}")
@@ -124,6 +117,10 @@ def format_notification(status: str, extra: str = "", error: str = "", expiry_da
         lines.append(extra)
     if error:
         lines.append(f"⚠️ 错误信息: {error}")
+    if CURRENT_IP:
+        parts = CURRENT_IP.split('.')
+        masked_ip = '.'.join(parts[:2] + ['x', 'x']) if len(parts) >= 4 else CURRENT_IP
+        lines.append(f"🌐 出口IP: {masked_ip}")
     lines.append(f"⏱️ 执行时间: {now}")
     return "\n".join(lines)
 
@@ -205,8 +202,10 @@ def main():
     with SB(**sb_kwargs) as sb:
         try:
             ip = get_current_ip(PROXY_SERVER if IS_PROXY else "")
+            CURRENT_IP = ip
             print(f"📍 当前出口IP: {ip}")
         except Exception as e:
+            CURRENT_IP = "（获取失败）"
             print(f"⚠️ 获取出口 IP 失败: {e}")
 
         print("🚀 启动浏览器...")
