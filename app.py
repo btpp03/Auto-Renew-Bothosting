@@ -19,10 +19,14 @@ if not SESSION_TOKEN :
     sys.exit(1)
 
 # 构造cookie
+USER_ID   = os.environ.get("USER_ID") or "206343786"   # bot-hosting user_id，用于辅助登录态判定
+USERNAME  = os.environ.get("USERNAME") or "btpp04"      # bot-hosting 用户名，仅通知展示
 COOKIES = {
     "session_token": SESSION_TOKEN,
     "login": "true",
     "theme": "system",
+    "user_id": USER_ID,
+    "username": USERNAME,
 }
 
 # 获取cookie到期时间
@@ -225,8 +229,12 @@ def main():
         current_url = sb.get_current_url()
         current_title = sb.get_title()
         print(f"📝 当前URL: {current_url}, Title: {current_title}")
-        if current_title != "Bot-Hosting.net | A Free Host For Discord Bots" or current_url != "https://bot-hosting.net/a/billings":
-            print(f"❌ 登录失败，当前标题: {current_title}")
+        # 登录判定：成功 = 到达账单页(/a/billings) 且未被重定向回登录页
+        # 失败 = URL 跳到 /login 或标题仍是未登录的首页标题
+        redirected_to_login = "/login" in current_url
+        on_guest_home = current_title == "Bot-Hosting.net | A Free Host For Discord Bots" and current_url.rstrip("/") == "https://bot-hosting.net"
+        if redirected_to_login or on_guest_home:
+            print(f"❌ 登录失败，当前标题: {current_title} | URL: {current_url}")
             send_telegram_message(format_notification("❌ 登录失败", error="Cookie 已失效或页面异常"))
             return
         print(f"✅ 登录成功,当前已到达账单页")
