@@ -19,8 +19,8 @@ if not SESSION_TOKEN :
     sys.exit(1)
 
 # 构造cookie
-USER_ID   = os.environ.get("USER_ID") or "206343786"   # bot-hosting user_id，用于辅助登录态判定
-USERNAME  = os.environ.get("USERNAME") or "btpp04"      # bot-hosting 用户名，仅通知展示
+USER_ID   = os.environ.get("USER_ID") or "206230573"   # bot-hosting user_id，用于辅助登录态判定
+USERNAME  = os.environ.get("USERNAME") or "btpp03"      # bot-hosting 用户名，仅通知展示
 COOKIES = {
     "session_token": SESSION_TOKEN,
     "login": "true",
