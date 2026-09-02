@@ -43,12 +43,16 @@ jobs:
         run: |
           xvfb-run --auto-servernum python3 app.py
 
-      - name: 📸 上传续期结果截图
+      - name: 📸 上传续期诊断文件
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: renew-result-${{ github.run_number }}
-          path: renew_result.png
+          path: |
+            renew_result.png
+            renew_before_submit.png
+            renew_after_submit.png
+            renew_result.html
           if-no-files-found: warn
           retention-days: 7
 
