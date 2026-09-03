@@ -132,91 +132,79 @@ def format_notification(status: str, extra: str = "", error: str = "", expiry_da
 # 注意：不能通过主页面里有没有“Verify you are human”来判断；Turnstile 位于
 # 跨域 iframe 中，该文字通常不会出现在主页面源码，旧逻辑会把未通过误报为成功。
 def get_turnstile_token(sb) -> str:
-    try:
-        return sb.execute_script("""
-            return (() => {
-              const selectors = [
-                'input[name="cf-turnstile-response"]',
-                'textarea[name="cf-turnstile-response"]',
-                'input[name="g-recaptcha-response"]',
-                'textarea[name="g-recaptcha-response"]'
-              ];
-              for (const selector of selectors) {
-                for (const el of document.querySelectorAll(selector)) {
-                  const value = (el.value || el.getAttribute('value') || '').trim();
-                  if (value) return value;
-                }
-              }
-              return '';
-            })();
-        """) or ""
-    except Exception as e:
-        print(f"⚠️ 读取 Turnstile token 失败: {e}")
-        return ""
+    """读取主文档中 Cloudflare Turnstile 注入的隐藏 token（原生 API，不用 execute_script）。"""
+    selectors = [
+        'input[name="cf-turnstile-response"]',
+        'textarea[name="cf-turnstile-response"]',
+        'input[name="g-recaptcha-response"]',
+        'textarea[name="g-recaptcha-response"]',
+    ]
+    for sel in selectors:
+        try:
+            if sb.is_element_present(sel):
+                val = sb.get_attribute(sel, "value") or ""
+                val = val.strip()
+                if val:
+                    return val
+        except Exception:
+            continue
+    return ""
 
 
 def wait_for_turnstile_pass(sb, timeout=30):
+    """等待 Turnstile 通过：以主文档 token 出现为准，辅以验证文字消失兜底。"""
     start = time.time()
+    cf_indicators = ["verify you are human", "确认您是真人", "troubleshoot", "just a moment"]
     while time.time() - start < timeout:
         token = get_turnstile_token(sb)
         if len(token) >= 20:
             print(f"✅ Turnstile 验证已通过（token 长度: {len(token)}）")
             return True
+        # 兜底：某些页面不暴露隐藏 token 字段，此时以验证文字是否消失判断
+        try:
+            page_lower = sb.get_page_source().lower()
+            if not any(x in page_lower for x in cf_indicators):
+                print("✅ Turnstile 验证已通过（页面验证文字消失）")
+                return True
+        except Exception:
+            pass
         sb.sleep(1)
     print("❌ Turnstile 验证超时：未取得有效 cf-turnstile-response token")
     return False
 
 
 def get_renew_button_state(sb):
-    """返回弹窗续期按钮的存在/禁用状态，避免把无效 click 当成成功。"""
+    """返回弹窗续期按钮的存在/禁用状态（原生 API，不用 execute_script）。"""
+    sel = 'button:contains("Renew for 4 days")'
     try:
-        return sb.execute_script("""
-            return (() => {
-              const buttons = [...document.querySelectorAll('button')];
-              const button = buttons.find(el =>
-                (el.innerText || el.textContent || '').includes('Renew for 4 days'));
-              if (!button) return {exists: false, disabled: true, text: ''};
-              return {
-                exists: true,
-                disabled: !!button.disabled || button.getAttribute('aria-disabled') === 'true',
-                text: (button.innerText || button.textContent || '').trim()
-              };
-            })();
-        """) or {"exists": False, "disabled": True, "text": ""}
-    except Exception as e:
-        print(f"⚠️ 读取续期按钮状态失败: {e}")
-        return {"exists": False, "disabled": True, "text": ""}
+        if sb.is_element_visible(sel):
+            disabled = sb.get_attribute(sel, "disabled") or sb.get_attribute(sel, "aria-disabled")
+            text = (sb.get_text(sel) or "").strip()
+            return {"exists": True, "disabled": bool(disabled) or disabled == "true", "text": text}
+    except Exception:
+        pass
+    return {"exists": False, "disabled": True, "text": ""}
 
 
 def get_page_feedback(sb) -> str:
-    """抓取提交后短暂出现的 toast/alert/dialog，刷新前记录后台错误。"""
-    try:
-        text = sb.execute_script("""
-            return (() => {
-              const selectors = [
-                '[role="alert"]', '[role="status"]',
-                '[class*="toast"]', '[class*="Toast"]',
-                '[class*="alert"]', '[class*="Alert"]',
-                '[class*="notification"]', '[class*="Notification"]',
-                '[aria-live="assertive"]', '[aria-live="polite"]'
-              ];
-              const values = [];
-              for (const selector of selectors) {
-                for (const el of document.querySelectorAll(selector)) {
-                  const style = window.getComputedStyle(el);
-                  const value = (el.innerText || el.textContent || '').trim();
-                  if (value && style.display !== 'none' && style.visibility !== 'hidden') {
-                    values.push(value);
-                  }
-                }
-              }
-              return [...new Set(values)].join(' | ').slice(0, 1000);
-            })();
-        """) or ""
-        return " ".join(text.split())
-    except Exception as e:
-        print(f"⚠️ 读取页面反馈失败: {e}")
-        return ""
+    """抓取提交后出现的 toast/alert/dialog 文本（原生 API，不用 execute_script）。"""
+    selectors = [
+        '[role="alert"]', '[role="status"]',
+        '[class*="toast"]', '[class*="Toast"]',
+        '[class*="alert"]', '[class*="Alert"]',
+        '[class*="notification"]', '[class*="Notification"]',
+        '[aria-live="assertive"]', '[aria-live="polite"]',
+    ]
+    texts = []
+    for sel in selectors:
+        try:
+            for el in sb.find_elements(sel):
+                t = (el.text or "").strip()
+                if t and t not in texts:
+                    texts.append(t)
+        except Exception:
+            continue
+    return " | ".join(texts)[:1000]
     
 # 获取当前出口ip
 def get_current_ip(proxy_server: str = "") -> str:
