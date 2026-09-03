@@ -472,52 +472,103 @@ def main():
                 return None
 
             def _click_turnstile_checkbox(sb):
-                """穿透 shadow DOM 找到 Turnstile iframe 并点击复选框，成功返回 True。"""
+                """点击 Turnstile 复选框。优先直接/穿透 open shadow 找 iframe；
+                若 iframe 在 closed shadow DOM（Selenium 无法遍历），回退用无 return 的
+                execute_script 递归穿透 shadow root 直接点击复选框。"""
                 try:
                     driver = sb.driver
                     try:
                         driver.switch_to.default_content()
                     except Exception:
                         pass
-                    # 1) 先直接找 iframe（等待出现）
-                    frame = _wait_for_turnstile_frame(driver, timeout=6)
-                    # 2) 找不到则穿透 shadow DOM 找
+                    # 1) 直接/穿透 open shadow 找 iframe
+                    frame = _wait_for_turnstile_frame(driver, timeout=5)
                     if not frame:
-                        print("  - 直接 iframe 未找到，尝试穿透 shadow DOM...")
                         frame = _search_iframe_in_shadow(driver)
-                    if not frame:
-                        print("  - shadow DOM 中仍未找到 Turnstile iframe")
-                        # 兜底：读主文档隐藏 token
+                    if frame:
+                        print(f"  - 找到 Turnstile iframe，切进去点击复选框")
+                        try:
+                            driver.switch_to.frame(frame)
+                            sb.sleep(1.5)
+                            for sel in ['[role="checkbox"]', 'input[type="checkbox"]',
+                                        '.challenge-container', '#challenge-stage input', 'button']:
+                                els = driver.find_elements(_By.CSS_SELECTOR, sel)
+                                for el in els:
+                                    try:
+                                        el.click()
+                                        driver.switch_to.default_content()
+                                        print(f"  - 已点击 iframe 内复选框")
+                                        return True
+                                    except Exception:
+                                        continue
+                            driver.switch_to.default_content()
+                        except Exception as e:
+                            print(f"  - iframe 切换/点击异常: {e}")
+                            try:
+                                driver.switch_to.default_content()
+                            except Exception:
+                                pass
+
+                    # 2) closed shadow DOM 回退：无 return 的 execute_script 穿透点击
+                    #    （脚本不含 return，规避 SeleniumBase UC 的 Illegal return 问题）
+                    print("  - 尝试无 return execute_script 穿透 shadow DOM 点击 Turnstile...")
+                    try:
+                        js_click = """
+                            (function(){
+                              function findClickable(root){
+                                // 遍历所有元素，含递归 shadow root
+                                const stack = [root];
+                                while(stack.length){
+                                  const el = stack.pop();
+                                  if(!el) continue;
+                                  const tn = (el.tagName||'').toLowerCase();
+                                  if(tn==='iframe'){
+                                    const s=(el.getAttribute('src')||'').toLowerCase();
+                                    if(s.indexOf('challenges.cloudflare.com')>=0||s.indexOf('turnstile')>=0||s.indexOf('captcha')>=0||s.indexOf('challenge')>=0){
+                                      try{ if(el.contentWindow && el.contentWindow.document){ return el; } }catch(e){}
+                                    }
+                                  }
+                                  // 复选框直接点
+                                  if((tn==='input'&&el.type==='checkbox')||el.getAttribute('role')==='checkbox'||tn==='button'){
+                                    return el;
+                                  }
+                                  if(el.shadowRoot) stack.push(el.shadowRoot);
+                                  const kids = el.children || el.querySelectorAll('*');
+                                  for(let i=kids.length-1;i>=0;i--){ stack.push(kids[i]); }
+                                }
+                                return null;
+                              }
+                              const t = findClickable(document);
+                              if(t){ t.click(); window.__ct_clicked=true; }
+                            })();
+                        """
+                        driver.execute_script(js_click)
+                        sb.sleep(1)
+                        print("  - execute_script 点击脚本已执行")
+                        # 无论 execute_script 是否报错，等 Turnstile 处理
+                        sb.sleep(2)
+                        # 若主文档 token 已出现即成功
                         try:
                             tok = sb.get_attribute('input[name="cf-turnstile-response"]', "value") or ""
                             if len(tok.strip()) >= 20:
-                                print(f"  - 主文档 token 已存在（长度 {len(tok.strip())}），视为已通过")
+                                print(f"  - execute_script 后主文档 token 出现（长度 {len(tok.strip())}）")
                                 return True
                         except Exception:
                             pass
-                        return False
-                    print(f"  - 找到 Turnstile iframe: {(frame.get_attribute('src') or '')[:80]}")
-                    driver.switch_to.frame(frame)
-                    sb.sleep(1.5)
-                    clicked = False
-                    sel = '[role="checkbox"], input[type="checkbox"], .challenge-container, .ctp-checkbox-label, #challenge-stage input, button'
-                    els = driver.find_elements(_By.CSS_SELECTOR, sel)
-                    for el in els:
-                        try:
-                            el.click()
-                            clicked = True
-                            print(f"  - 已点击 Turnstile iframe 内元素: {el.tag_name}.{el.get_attribute('class') or ''}")
-                            break
-                        except Exception:
-                            continue
-                    driver.switch_to.default_content()
-                    return clicked
-                except Exception as e:
-                    print(f"  - iframe 点击异常: {e}")
+                    except Exception as e:
+                        print(f"  - execute_script 异常: {e}")
+
+                    # 3) 最终兜底：读主文档隐藏 token
                     try:
-                        sb.driver.switch_to.default_content()
+                        tok = sb.get_attribute('input[name="cf-turnstile-response"]', "value") or ""
+                        if len(tok.strip()) >= 20:
+                            print(f"  - 主文档 token 已存在（长度 {len(tok.strip())}），视为已通过")
+                            return True
                     except Exception:
                         pass
+                    return False
+                except Exception as e:
+                    print(f"  - Turnstile 点击整体异常: {e}")
                     return False
 
             print("🔒 检测弹窗中的 Turnstile 验证...")
@@ -530,9 +581,19 @@ def main():
                     break
 
                 try:
-                    print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile 复选框...")
-                    _click_turnstile_checkbox(sb)
-                    sb.sleep(2)
+                    print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile...")
+                    if attempt >= 4:
+                        # 前面 iframe/shadow/execute_script 都失败，回退到 UC 像素点击
+                        # （实测能点中 Turnstile，但长时间运行可能致 Chrome 崩溃，故仅末次使用）
+                        print("  - 回退到 uc_gui_click_captcha（UC 像素级点击）...")
+                        try:
+                            sb.uc_gui_click_captcha()
+                        except Exception as e:
+                            print(f"  - uc_gui_click_captcha 异常: {e}")
+                        sb.sleep(4)
+                    else:
+                        _click_turnstile_checkbox(sb)
+                        sb.sleep(2)
                 except Exception as e:
                     print(f"⚠️ 点击 Turnstile 出错: {e}")
 
