@@ -27,11 +27,12 @@ jobs:
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: ⚙ 设置代理 (sing-box)
-        env:
-          NODE_LINK: ${{ secrets.NODE_LINK }}
+      - name: ⚙ 设置代理 (用户指定日本 socks5)
+        # 直接用用户提供的固定日本 socks 代理，绕过 NODE_LINK 订阅（怀疑原 IP 信誉差致 Turnstile 异常）
         run: |
-          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+          echo "IS_PROXY=true" >> $GITHUB_ENV
+          echo "PROXY_SERVER=socks5://97cec60d-8b80-4c99-ab58-cb7da426ea35:97cec60d-8b80-4c99-ab58-cb7da426ea35@162.43.43.134:25575" >> $GITHUB_ENV
+          echo "✅ 使用日本 socks5: 162.43.43.134:25575"
 
       - name: 🚀 运行续期脚本
         env:
