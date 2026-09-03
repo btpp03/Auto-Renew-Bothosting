@@ -423,44 +423,58 @@ def main():
                     pass
                 return None
 
+            def _wait_for_turnstile_frame(driver, timeout=12):
+                """轮询等待 Turnstile iframe 出现（Cloudflare 异步注入，可能含 shadow DOM）。"""
+                from selenium.webdriver.common.by import By as _By2
+                import time as _t
+                deadline = _t.time() + timeout
+                while _t.time() < deadline:
+                    try:
+                        for f in driver.find_elements(_By2.TAG_NAME, "iframe"):
+                            src = (f.get_attribute("src") or "").lower()
+                            if "challenges.cloudflare.com" in src or "turnstile" in src:
+                                return f
+                        # 兜底：宽松匹配任意含 turnstile/captcha 的 iframe
+                        for f in driver.find_elements(_By2.TAG_NAME, "iframe"):
+                            src = (f.get_attribute("src") or "").lower()
+                            if "captcha" in src or "challenge" in src or "turnstile" in src:
+                                return f
+                    except Exception:
+                        pass
+                    _t.sleep(0.5)
+                return None
+
             def _click_turnstile_checkbox(sb):
-                """切进 Turnstile iframe 点击复选框，成功返回 True。"""
+                """等 Turnstile iframe 出现后切进并点击复选框，成功返回 True。"""
                 try:
-                    import os as _os
-                    _os.makedirs("debug_dom", exist_ok=True)
                     driver = sb.driver
                     try:
                         driver.switch_to.default_content()
                     except Exception:
                         pass
-                    # 诊断：dump 主文档 + 列出所有 iframe
-                    try:
-                        src_all = driver.page_source or ""
-                        with open("debug_dom/modal_open.html", "w", encoding="utf-8") as f:
-                            f.write(src_all)
-                        all_frames = driver.find_elements(_By.TAG_NAME, "iframe")
-                        print(f"  - 主文档 iframe 总数: {len(all_frames)}")
-                        for idx, ff in enumerate(all_frames):
-                            fsrc = ff.get_attribute("src") or "(无src)"
-                            fid = ff.get_attribute("id") or ""
-                            fcls = ff.get_attribute("class") or ""
-                            print(f"    iframe[{idx}] src={fsrc[:120]} id={fid[:40]} class={fcls[:40]}")
-                    except Exception as e:
-                        print(f"  - iframe 诊断失败: {e}")
-                    frame = _find_turnstile_frame(driver)
+                    frame = _wait_for_turnstile_frame(driver, timeout=12)
                     if not frame:
-                        print("  - 未找到 Turnstile iframe")
+                        print("  - 等待 12s 后仍未找到 Turnstile iframe")
+                        # 兜底：直接读取主文档隐藏 token 字段判断是否已通过
+                        try:
+                            tok = sb.get_attribute('input[name="cf-turnstile-response"]', "value") or ""
+                            if len(tok.strip()) >= 20:
+                                print(f"  - 主文档 token 已存在（长度 {len(tok.strip())}），视为已通过")
+                                return True
+                        except Exception:
+                            pass
                         return False
+                    print(f"  - 找到 Turnstile iframe: {(frame.get_attribute('src') or '')[:80]}")
                     driver.switch_to.frame(frame)
-                    sb.sleep(1)
+                    sb.sleep(1.5)
                     clicked = False
-                    sel = '[role="checkbox"], input[type="checkbox"], .challenge-container, .ctp-checkbox-label, #challenge-stage input'
+                    sel = '[role="checkbox"], input[type="checkbox"], .challenge-container, .ctp-checkbox-label, #challenge-stage input, button'
                     els = driver.find_elements(_By.CSS_SELECTOR, sel)
                     for el in els:
                         try:
                             el.click()
                             clicked = True
-                            print("  - 已点击 Turnstile iframe 内复选框")
+                            print(f"  - 已点击 Turnstile iframe 内元素: {el.tag_name}.{el.get_attribute('class') or ''}")
                             break
                         except Exception:
                             continue
