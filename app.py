@@ -413,25 +413,40 @@ def main():
             # 不再依赖 iframe 文案或主文档文字消失等不可靠判断。
             print("🔒 检测弹窗中的 Turnstile 验证...")
             button_ready = False
-            for attempt in range(1, 5):
-                # 先看按钮是否已经解锁（可能无需点击已通过）
+            # 减少点击次数以降低 Chrome 崩溃概率；每次点击后 dump DOM 用于诊断按钮位置
+            for attempt in range(1, 3):
                 state = get_renew_button_state(sb)
                 if state.get("exists") and not state.get("disabled"):
                     button_ready = True
-                    print(f"✅ 续期按钮已可用（无需点击验证）: {state.get('text')}")
+                    print(f"✅ 续期按钮已可用: {state.get('text')}")
                     break
 
-                # 尝试点击 Turnstile 复选框（UC 模式按像素坐标点击）
                 try:
-                    print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile...")
+                    print(f"🖱️ 第 {attempt}/2 次尝试点击 Turnstile...")
                     sb.uc_gui_click_captcha()
-                    sb.sleep(2)
+                    sb.sleep(3)
                 except Exception as e:
                     print(f"⚠️ 点击 Turnstile 出错: {e}")
 
-                # 点击后轮询等待按钮解锁
+                # 点击后先 dump 当前 DOM（此时 Chrome 应仍存活），再轮询按钮
+                print("📦 Turnstile 点击后 dump 主文档 DOM 用于诊断...")
+                try:
+                    import os as _os
+                    _os.makedirs("debug_dom", exist_ok=True)
+                    driver = sb.driver
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    src = driver.page_source or ""
+                    with open("debug_dom/after_turnstile.html", "w", encoding="utf-8") as f:
+                        f.write(src)
+                    print(f"📦 after_turnstile.html 大小: {len(src)}; iframe数: {src.count('<iframe')}; 'Renew for 4 days'出现: {src.count('Renew for 4 days')}; 'Renew'出现: {src.count('Renew')}")
+                except Exception as e:
+                    print(f"⚠️ Turnstile 后 dump 失败: {e}")
+
                 unlocked = False
-                for wait_round in range(1, 21):
+                for wait_round in range(1, 16):
                     sb.sleep(1)
                     state = get_renew_button_state(sb)
                     if state.get("exists") and not state.get("disabled"):
@@ -439,8 +454,8 @@ def main():
                         button_ready = True
                         print(f"✅ Turnstile 通过，续期按钮已启用: {state.get('text')}")
                         break
-                    if wait_round in (1, 5, 10, 15, 20):
-                        print(f"⏳ 等待按钮启用中（{wait_round}/20）: exists={state.get('exists')} disabled={state.get('disabled')}")
+                    if wait_round in (1, 5, 10, 15):
+                        print(f"⏳ 等待按钮启用中（{wait_round}/15）: exists={state.get('exists')} disabled={state.get('disabled')}")
                 if unlocked:
                     break
                 print(f"⏳ 第 {attempt} 次点击后按钮仍未启用，准备重试...")
