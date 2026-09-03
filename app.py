@@ -183,6 +183,11 @@ def get_renew_button_state(sb):
     ]
     try:
         driver = sb.driver
+        # 确保回到主文档：uc_gui_click_captcha 可能把焦点切进 Turnstile iframe
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
         for xp in xpaths:
             try:
                 els = driver.find_elements(By.XPATH, xp)
@@ -457,6 +462,11 @@ def main():
             # 点击后先观察弹窗/Toast 和日期变化，避免刷新掉瞬时错误。
             modal_button_clicked = False
             try:
+                # 确保回到主文档再点击续期按钮
+                try:
+                    sb.driver.switch_to.default_content()
+                except Exception:
+                    pass
                 sb.save_screenshot("renew_before_submit.png")
                 sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
                 modal_button_clicked = True
