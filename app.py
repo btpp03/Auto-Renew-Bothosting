@@ -444,18 +444,50 @@ def main():
                     _t.sleep(0.5)
                 return None
 
+            def _search_iframe_in_shadow(driver, root=None):
+                """递归穿透 open shadow DOM 查找 Turnstile iframe。返回 iframe 元素或 None。"""
+                from selenium.webdriver.common.by import By as _ByS
+                scope = root if root is not None else driver
+                try:
+                    for f in scope.find_elements(_ByS.TAG_NAME, "iframe"):
+                        src = (f.get_attribute("src") or "").lower()
+                        if "challenges.cloudflare.com" in src or "turnstile" in src:
+                            return f
+                except Exception:
+                    pass
+                # 递归查 shadow root
+                try:
+                    els = scope.find_elements(_ByS.CSS_SELECTOR, "*")
+                except Exception:
+                    els = []
+                for el in els:
+                    try:
+                        sr = el.shadow_root
+                        if sr is not None:
+                            found = _search_iframe_in_shadow(driver, sr)
+                            if found:
+                                return found
+                    except Exception:
+                        continue
+                return None
+
             def _click_turnstile_checkbox(sb):
-                """等 Turnstile iframe 出现后切进并点击复选框，成功返回 True。"""
+                """穿透 shadow DOM 找到 Turnstile iframe 并点击复选框，成功返回 True。"""
                 try:
                     driver = sb.driver
                     try:
                         driver.switch_to.default_content()
                     except Exception:
                         pass
-                    frame = _wait_for_turnstile_frame(driver, timeout=12)
+                    # 1) 先直接找 iframe（等待出现）
+                    frame = _wait_for_turnstile_frame(driver, timeout=6)
+                    # 2) 找不到则穿透 shadow DOM 找
                     if not frame:
-                        print("  - 等待 12s 后仍未找到 Turnstile iframe")
-                        # 兜底：直接读取主文档隐藏 token 字段判断是否已通过
+                        print("  - 直接 iframe 未找到，尝试穿透 shadow DOM...")
+                        frame = _search_iframe_in_shadow(driver)
+                    if not frame:
+                        print("  - shadow DOM 中仍未找到 Turnstile iframe")
+                        # 兜底：读主文档隐藏 token
                         try:
                             tok = sb.get_attribute('input[name="cf-turnstile-response"]', "value") or ""
                             if len(tok.strip()) >= 20:
