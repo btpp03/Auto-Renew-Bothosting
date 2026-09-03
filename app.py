@@ -679,6 +679,7 @@ def main():
             except Exception:
                 pass
             button_ready = False
+            already_submitted_via_js = False  # 若为 True 表示续期按钮已被 JS 点过，勿重复点击
             # 主循环：先等 iframe 就绪，再点击复选框
             for attempt in range(1, 5):
                 state = get_renew_button_state(sb)
@@ -732,6 +733,8 @@ def main():
                         except Exception as e:
                             print(f"  ⚠️ JS 点击续期按钮异常: {e}")
                     if clicked_by_js:
+                        # JS 已点中续期按钮，标记已提交，跳过后面的 Selenium 重复点击
+                        already_submitted_via_js = True
                         break
                 if unlocked:
                     break
@@ -763,32 +766,33 @@ def main():
                 raise RuntimeError("续期按钮未解锁：Turnstile 验证未通过")
 
             # 点击后先观察弹窗/Toast 和日期变化，避免刷新掉瞬时错误。
-            modal_button_clicked = False
-            try:
-                # 确保回到主文档再点击续期按钮
+            modal_button_clicked = already_submitted_via_js  # JS 已点过则直接视为已点击
+            if not modal_button_clicked:
                 try:
-                    sb.driver.switch_to.default_content()
-                except Exception:
-                    pass
-                sb.save_screenshot("renew_before_submit.png")
-                try:
-                    sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
-                    modal_button_clicked = True
-                    print("✅ 已点击启用状态的续期按钮 (Selenium)")
-                except Exception as se:
-                    # Selenium 点击失败(可能 driver 半死)，回退 JS 直接点击
-                    print(f"⚠️ Selenium 点击失败({str(se)[:80]})，改用 JS 点击...")
+                    # 确保回到主文档再点击续期按钮
                     try:
                         sb.driver.switch_to.default_content()
                     except Exception:
                         pass
-                    r = sb.execute_script(JS_CLICK_RENEW)
-                    print(f"  🎯 JS 点击续期按钮: {r}")
-                    if r and "clicked" in str(r):
+                    sb.save_screenshot("renew_before_submit.png")
+                    try:
+                        sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
                         modal_button_clicked = True
-                        print("✅ 已通过 JS 点击续期按钮")
-            except Exception as e:
-                print(f"❌ 续期按钮点击失败: {e}")
+                        print("✅ 已点击启用状态的续期按钮 (Selenium)")
+                    except Exception as se:
+                        # Selenium 点击失败(可能 driver 半死)，回退 JS 直接点击
+                        print(f"⚠️ Selenium 点击失败({str(se)[:80]})，改用 JS 点击...")
+                        try:
+                            sb.driver.switch_to.default_content()
+                        except Exception:
+                            pass
+                        r = sb.execute_script(JS_CLICK_RENEW)
+                        print(f"  🎯 JS 点击续期按钮: {r}")
+                        if r and "clicked" in str(r):
+                            modal_button_clicked = True
+                            print("✅ 已通过 JS 点击续期按钮")
+                except Exception as e:
+                    print(f"❌ 续期按钮点击失败: {e}")
 
             if not modal_button_clicked:
                 sb.save_screenshot("renew_result.png")
@@ -805,17 +809,24 @@ def main():
             last_feedback = ""
             for observe_round in range(1, 16):
                 sb.sleep(1)
-                page_text = sb.get_page_source()
+                try:
+                    page_text = sb.get_page_source()
+                except Exception as e:
+                    print(f"⚠️ 读取页面源码失败(第{observe_round}轮): {str(e)[:80]}")
+                    continue
                 new_expiry = extract_expiry_date(page_text)
                 new_match = re.search(r"Renew in (\d{1,3}:\d{2}:\d{2})", page_text)
                 success_hint = re.search(
                     r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete",
                     page_text, re.I,
                 )
-                feedback = get_page_feedback(sb)
-                if feedback and feedback != last_feedback:
-                    last_feedback = feedback
-                    print(f"📣 页面反馈: {feedback}")
+                try:
+                    feedback = get_page_feedback(sb)
+                    if feedback and feedback != last_feedback:
+                        last_feedback = feedback
+                        print(f"📣 页面反馈: {feedback}")
+                except Exception as fe:
+                    pass
                 if new_expiry and new_expiry != current_expiry:
                     renew_confirmed = True
                     break
@@ -827,7 +838,10 @@ def main():
                     renew_confirmed = True
                     break
 
-            sb.save_screenshot("renew_after_submit.png")
+            try:
+                sb.save_screenshot("renew_after_submit.png")
+            except Exception:
+                pass
 
             # 平台可能异步处理；未即时确认时再刷新账单页核验。
             if not renew_confirmed:
@@ -840,16 +854,23 @@ def main():
                     except Exception as e:
                         print(f"⚠️ 第 {check_attempt} 次刷新页面失败: {e}")
 
-                    new_page_text = sb.get_page_source()
+                    try:
+                        new_page_text = sb.get_page_source()
+                    except Exception as e:
+                        print(f"⚠️ 刷新后读页面源码失败: {str(e)[:80]}")
+                        continue
                     new_expiry = extract_expiry_date(new_page_text)
                     new_match = re.search(r"Renew in (\d{1,3}:\d{2}:\d{2})", new_page_text)
                     success_hint = re.search(
                         r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete",
                         new_page_text, re.I,
                     )
-                    feedback = get_page_feedback(sb)
-                    if feedback:
-                        last_feedback = feedback
+                    try:
+                        feedback = get_page_feedback(sb)
+                        if feedback:
+                            last_feedback = feedback
+                    except Exception:
+                        feedback = None
 
                     print(
                         f"🔎 第 {check_attempt}/4 次检查: "
