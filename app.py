@@ -878,6 +878,13 @@ def main():
                 )
             else:
                 print("ℹ️ 未找到续期按钮或倒计时，状态未知")
+                # 诊断：保存页面源码与 DOM，判断是登录失效/空壳还是真的无续期按钮
+                try:
+                    sb.save_page_source("renew_result.html")
+                    dump_dom_for_debug(sb)
+                    print("📄 已保存页面源码 renew_result.html + debug_dom/ 供诊断")
+                except Exception as de:
+                    print(f"⚠️ 保存诊断文件失败: {de}")
                 send_telegram_message(
                     format_notification(
                         "ℹ️ 无需续期",
