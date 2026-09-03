@@ -134,19 +134,21 @@ def format_notification(status: str, extra: str = "", error: str = "", expiry_da
 def get_turnstile_token(sb) -> str:
     try:
         return sb.execute_script("""
-            const selectors = [
-              'input[name="cf-turnstile-response"]',
-              'textarea[name="cf-turnstile-response"]',
-              'input[name="g-recaptcha-response"]',
-              'textarea[name="g-recaptcha-response"]'
-            ];
-            for (const selector of selectors) {
-              for (const el of document.querySelectorAll(selector)) {
-                const value = (el.value || el.getAttribute('value') || '').trim();
-                if (value) return value;
+            return (() => {
+              const selectors = [
+                'input[name="cf-turnstile-response"]',
+                'textarea[name="cf-turnstile-response"]',
+                'input[name="g-recaptcha-response"]',
+                'textarea[name="g-recaptcha-response"]'
+              ];
+              for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                  const value = (el.value || el.getAttribute('value') || '').trim();
+                  if (value) return value;
+                }
               }
-            }
-            return '';
+              return '';
+            })();
         """) or ""
     except Exception as e:
         print(f"⚠️ 读取 Turnstile token 失败: {e}")
@@ -169,15 +171,17 @@ def get_renew_button_state(sb):
     """返回弹窗续期按钮的存在/禁用状态，避免把无效 click 当成成功。"""
     try:
         return sb.execute_script("""
-            const buttons = [...document.querySelectorAll('button')];
-            const button = buttons.find(el =>
-              (el.innerText || el.textContent || '').includes('Renew for 4 days'));
-            if (!button) return {exists: false, disabled: true, text: ''};
-            return {
-              exists: true,
-              disabled: !!button.disabled || button.getAttribute('aria-disabled') === 'true',
-              text: (button.innerText || button.textContent || '').trim()
-            };
+            return (() => {
+              const buttons = [...document.querySelectorAll('button')];
+              const button = buttons.find(el =>
+                (el.innerText || el.textContent || '').includes('Renew for 4 days'));
+              if (!button) return {exists: false, disabled: true, text: ''};
+              return {
+                exists: true,
+                disabled: !!button.disabled || button.getAttribute('aria-disabled') === 'true',
+                text: (button.innerText || button.textContent || '').trim()
+              };
+            })();
         """) or {"exists": False, "disabled": True, "text": ""}
     except Exception as e:
         print(f"⚠️ 读取续期按钮状态失败: {e}")
@@ -188,24 +192,26 @@ def get_page_feedback(sb) -> str:
     """抓取提交后短暂出现的 toast/alert/dialog，刷新前记录后台错误。"""
     try:
         text = sb.execute_script("""
-            const selectors = [
-              '[role="alert"]', '[role="status"]',
-              '[class*="toast"]', '[class*="Toast"]',
-              '[class*="alert"]', '[class*="Alert"]',
-              '[class*="notification"]', '[class*="Notification"]',
-              '[aria-live="assertive"]', '[aria-live="polite"]'
-            ];
-            const values = [];
-            for (const selector of selectors) {
-              for (const el of document.querySelectorAll(selector)) {
-                const style = window.getComputedStyle(el);
-                const value = (el.innerText || el.textContent || '').trim();
-                if (value && style.display !== 'none' && style.visibility !== 'hidden') {
-                  values.push(value);
+            return (() => {
+              const selectors = [
+                '[role="alert"]', '[role="status"]',
+                '[class*="toast"]', '[class*="Toast"]',
+                '[class*="alert"]', '[class*="Alert"]',
+                '[class*="notification"]', '[class*="Notification"]',
+                '[aria-live="assertive"]', '[aria-live="polite"]'
+              ];
+              const values = [];
+              for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                  const style = window.getComputedStyle(el);
+                  const value = (el.innerText || el.textContent || '').trim();
+                  if (value && style.display !== 'none' && style.visibility !== 'hidden') {
+                    values.push(value);
+                  }
                 }
               }
-            }
-            return [...new Set(values)].join(' | ').slice(0, 1000);
+              return [...new Set(values)].join(' | ').slice(0, 1000);
+            })();
         """) or ""
         return " ".join(text.split())
     except Exception as e:
