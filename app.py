@@ -543,8 +543,8 @@ def main():
                         driver.switch_to.default_content()
                     except Exception:
                         pass
-                    # 1) 直接/穿透 open shadow 找 iframe
-                    frame = _wait_for_turnstile_frame(driver, timeout=5)
+                    # 1) 直接/穿透 open shadow 找 iframe（弹窗异步加载，给足等待时间）
+                    frame = _wait_for_turnstile_frame(driver, timeout=15)
                     if not frame:
                         frame = _search_iframe_in_shadow(driver)
                     if frame:
@@ -638,31 +638,18 @@ def main():
                     return False
 
             print("🔒 检测弹窗中的 Turnstile 验证...")
-            # CDP 诊断：列出所有 frame 树，定位 Turnstile iframe 真实位置
+            # 关键：点击外部按钮后弹窗与 Turnstile iframe 是异步加载的，必须先等待 iframe
+            # 出现（这是弹窗加载完成的标志），再尝试点击，否则所有操作都会落空。
             try:
                 driver = sb.driver
                 try:
                     driver.switch_to.default_content()
                 except Exception:
                     pass
-                def _walk_frames(node, depth=0):
-                    try:
-                        print(f"  {'  '*depth}frame: {node.get('url','')[:110]}")
-                    except Exception:
-                        pass
-                    for c in (node.get('childFrames') or []):
-                        _walk_frames(c, depth+1)
-                tree = driver.execute_cdp_cmd("Page.getFrameTree", {})
-                print("🔎 CDP FrameTree:")
-                _walk_frames(tree.get('frameTree', {}))
-                # 列出主文档直接 iframe 数量与 src
-                iframes = driver.find_elements(_By.TAG_NAME, "iframe")
-                print(f"🔎 Selenium 主文档可见 iframe 数: {len(iframes)}")
-                for i2, f2 in enumerate(iframes):
-                    print(f"   iframe[{i2}] src={(f2.get_attribute('src') or '')[:110]}")
-            except Exception as e:
-                print(f"🔎 CDP 诊断不可用: {type(e).__name__}: {str(e)[:120]}")
+            except Exception:
+                pass
             button_ready = False
+            # 主循环：先等 iframe 就绪，再点击复选框
             for attempt in range(1, 5):
                 state = get_renew_button_state(sb)
                 if state.get("exists") and not state.get("disabled"):
@@ -670,11 +657,11 @@ def main():
                     print(f"✅ 续期按钮已可用: {state.get('text')}")
                     break
 
+                # 每次尝试：等 iframe 出现（最长 15 秒），出现后切进去点复选框
                 try:
                     print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile...")
                     if attempt >= 4:
-                        # 前面 iframe/shadow/execute_script 都失败，回退到 UC 像素点击
-                        # （实测能点中 Turnstile，但长时间运行可能致 Chrome 崩溃，故仅末次使用）
+                        # 前 3 次 iframe 定位均未成功，回退 UC 像素点击
                         print("  - 回退到 uc_gui_click_captcha（UC 像素级点击）...")
                         try:
                             sb.uc_gui_click_captcha()
