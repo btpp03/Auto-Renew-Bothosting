@@ -27,12 +27,33 @@ jobs:
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: ⚙ 设置代理 (用户指定日本 socks5)
-        # 直接用用户提供的固定日本 socks 代理，绕过 NODE_LINK 订阅（怀疑原 IP 信誉差致 Turnstile 异常）
+      - name: ⚙ 设置代理 (日本 socks5 → 本地无认证 socks5:1080)
+        # 用户指定日本 socks 代理。Chrome 无法直接挂带认证的远程 socks（会连接失败显示离线页），
+        # 因此用 sing-box 把远程认证 socks 转发成本地 127.0.0.1:1080 无认证 socks，再让 app.py 挂载。
         run: |
+          wget -qO sb.tar.gz https://github.com/SagerNet/sing-box/releases/download/v1.13.7/sing-box-1.13.7-linux-amd64.tar.gz
+          tar -xzf sb.tar.gz && mv sing-box-*/sing-box ./ && chmod +x sing-box && rm -f sb.tar.gz
+          cat > sing-box-config.json <<'EOF'
+          {
+            "log": {"level": "warn"},
+            "inbounds": [{"type":"socks","tag":"socks-in","listen":"127.0.0.1","listen_port":1080}],
+            "outbounds": [{
+              "type":"socks","tag":"jp-socks",
+              "server":"162.43.43.134","server_port":25575,
+              "version":"5",
+              "username":"97cec60d-8b80-4c99-ab58-cb7da426ea35",
+              "password":"97cec60d-8b80-4c99-ab58-cb7da426ea35"
+            }]
+          }
+          EOF
+          ./sing-box run -c sing-box-config.json > sing-box.log 2>&1 &
+          sleep 3
           echo "IS_PROXY=true" >> $GITHUB_ENV
-          echo "PROXY_SERVER=socks5://97cec60d-8b80-4c99-ab58-cb7da426ea35:97cec60d-8b80-4c99-ab58-cb7da426ea35@162.43.43.134:25575" >> $GITHUB_ENV
-          echo "✅ 使用日本 socks5: 162.43.43.134:25575"
+          echo "PROXY_SERVER=socks5://127.0.0.1:1080" >> $GITHUB_ENV
+          echo "=== 验证本地 socks 出口 IP ==="
+          curl -x socks5://127.0.0.1:1080 -s --max-time 15 https://api.ipify.org || echo "(验证失败,看 sing-box.log)"
+          echo ""
+          echo "✅ 日本 socks 已转发到本地 127.0.0.1:1080"
 
       - name: 🚀 运行续期脚本
         env:
