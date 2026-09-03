@@ -53,6 +53,7 @@ jobs:
             renew_before_submit.png
             renew_after_submit.png
             renew_result.html
+            debug_dom/
           if-no-files-found: warn
           retention-days: 7
 

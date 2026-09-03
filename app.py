@@ -221,6 +221,45 @@ def get_page_feedback(sb) -> str:
         except Exception:
             continue
     return " | ".join(texts)[:1000]
+
+
+def dump_dom_for_debug(sb):
+    """保存主文档及所有 iframe 的 HTML，用于定位续期按钮真实位置（Selenium 原生）。"""
+    from selenium.webdriver.common.by import By
+    import os
+    try:
+        os.makedirs("debug_dom", exist_ok=True)
+        driver = sb.driver
+        try:
+            with open("debug_dom/main.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source or "")
+        except Exception as e:
+            print(f"⚠️ 主文档 dump 失败: {e}")
+        try:
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            print(f"🔎 检测到 {len(iframes)} 个 iframe")
+            for i, frame in enumerate(iframes):
+                try:
+                    src = frame.get_attribute("src") or ""
+                    driver.switch_to.frame(frame)
+                    html = driver.page_source or ""
+                    with open(f"debug_dom/iframe_{i}.html", "w", encoding="utf-8") as f:
+                        f.write(html)
+                    with open(f"debug_dom/iframe_{i}.txt", "w", encoding="utf-8") as f:
+                        f.write(f"SRC: {src}\n{html}")
+                    print(f"🔎 iframe[{i}] src={src[:120]} size={len(html)}")
+                    driver.switch_to.default_content()
+                except Exception as e:
+                    print(f"⚠️ iframe[{i}] 处理失败: {e}")
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"⚠️ iframe 遍历失败: {e}")
+    except Exception as e:
+        print(f"⚠️ DOM dump 失败: {e}")
+
     
 # 获取当前出口ip
 def get_current_ip(proxy_server: str = "") -> str:
@@ -404,6 +443,7 @@ def main():
             if not button_ready:
                 sb.save_screenshot("renew_result.png")
                 feedback = get_page_feedback(sb)
+                dump_dom_for_debug(sb)
                 print("❌ Turnstile 验证最终未通过，脚本退出")
                 send_telegram_photo(
                     format_notification(
