@@ -348,60 +348,55 @@ def main():
                 send_telegram_message(format_notification("❌ 续期失败", error="点击外部续期按钮出错"))
                 return
 
-            # 处理弹窗中的 Turnstile：必须拿到真实 token，不能只凭 iframe 文案判断。
+            # 处理弹窗中的 Turnstile：以“Renew for 4 days”按钮由禁用变启用为唯一可靠信号。
+            # Turnstile 真正通过后平台会自动解锁续期按钮，因此直接等按钮解锁，
+            # 不再依赖 iframe 文案或主文档文字消失等不可靠判断。
             print("🔒 检测弹窗中的 Turnstile 验证...")
-            turnstile_passed = False
-            for attempt in range(1, 4):
-                token_before = get_turnstile_token(sb)
-                if len(token_before) >= 20:
-                    turnstile_passed = True
-                    print(f"✅ Turnstile 已有有效 token（长度: {len(token_before)}）")
-                    break
-                try:
-                    print(f"🖱️ 第 {attempt}/3 次尝试点击 Turnstile...")
-                    sb.uc_gui_click_captcha()
-                    time.sleep(5)
-                except Exception as e:
-                    print(f"⚠️ 点击 Turnstile 出错: {e}")
-
-                if wait_for_turnstile_pass(sb, timeout=25):
-                    turnstile_passed = True
-                    break
-                print(f"⏳ 第 {attempt} 次未取得 token，准备重试...")
-
-            if not turnstile_passed:
-                sb.save_screenshot("renew_result.png")
-                print("❌ Turnstile 验证最终未通过，脚本退出")
-                send_telegram_photo(
-                    format_notification("❌ 续期失败", error="Turnstile 未生成有效 token"),
-                    "renew_result.png"
-                )
-                raise RuntimeError("Turnstile 未生成有效 cf-turnstile-response token")
-
-            # 等待弹窗按钮真正 enabled 后再点击。
-            print("⏳ 等待续期按钮变为可用...")
             button_ready = False
-            for wait_round in range(1, 21):
+            for attempt in range(1, 5):
+                # 先看按钮是否已经解锁（可能无需点击已通过）
                 state = get_renew_button_state(sb)
                 if state.get("exists") and not state.get("disabled"):
                     button_ready = True
-                    print(f"✅ 续期按钮已启用: {state.get('text')}")
+                    print(f"✅ 续期按钮已可用（无需点击验证）: {state.get('text')}")
                     break
-                if wait_round in (1, 5, 10, 15, 20):
-                    print(f"⏳ 按钮尚未启用（{wait_round}/20）: {state}")
-                sb.sleep(1)
+
+                # 尝试点击 Turnstile 复选框（UC 模式按像素坐标点击）
+                try:
+                    print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile...")
+                    sb.uc_gui_click_captcha()
+                    sb.sleep(2)
+                except Exception as e:
+                    print(f"⚠️ 点击 Turnstile 出错: {e}")
+
+                # 点击后轮询等待按钮解锁
+                unlocked = False
+                for wait_round in range(1, 21):
+                    sb.sleep(1)
+                    state = get_renew_button_state(sb)
+                    if state.get("exists") and not state.get("disabled"):
+                        unlocked = True
+                        button_ready = True
+                        print(f"✅ Turnstile 通过，续期按钮已启用: {state.get('text')}")
+                        break
+                    if wait_round in (1, 5, 10, 15, 20):
+                        print(f"⏳ 等待按钮启用中（{wait_round}/20）: exists={state.get('exists')} disabled={state.get('disabled')}")
+                if unlocked:
+                    break
+                print(f"⏳ 第 {attempt} 次点击后按钮仍未启用，准备重试...")
 
             if not button_ready:
                 sb.save_screenshot("renew_result.png")
                 feedback = get_page_feedback(sb)
+                print("❌ Turnstile 验证最终未通过，脚本退出")
                 send_telegram_photo(
                     format_notification(
                         "❌ 续期失败",
-                        error=f"Turnstile 已有 token，但续期按钮仍不可用{': ' + feedback if feedback else ''}"
+                        error=f"续期按钮始终未解锁（Turnstile 未通过）{': ' + feedback if feedback else ''}"
                     ),
                     "renew_result.png"
                 )
-                raise RuntimeError("Turnstile token 已生成，但弹窗续期按钮仍不可用")
+                raise RuntimeError("续期按钮未解锁：Turnstile 验证未通过")
 
             # 点击后先观察弹窗/Toast 和日期变化，避免刷新掉瞬时错误。
             modal_button_clicked = False
