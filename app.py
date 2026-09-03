@@ -426,11 +426,27 @@ def main():
             def _click_turnstile_checkbox(sb):
                 """切进 Turnstile iframe 点击复选框，成功返回 True。"""
                 try:
+                    import os as _os
+                    _os.makedirs("debug_dom", exist_ok=True)
                     driver = sb.driver
                     try:
                         driver.switch_to.default_content()
                     except Exception:
                         pass
+                    # 诊断：dump 主文档 + 列出所有 iframe
+                    try:
+                        src_all = driver.page_source or ""
+                        with open("debug_dom/modal_open.html", "w", encoding="utf-8") as f:
+                            f.write(src_all)
+                        all_frames = driver.find_elements(_By.TAG_NAME, "iframe")
+                        print(f"  - 主文档 iframe 总数: {len(all_frames)}")
+                        for idx, ff in enumerate(all_frames):
+                            fsrc = ff.get_attribute("src") or "(无src)"
+                            fid = ff.get_attribute("id") or ""
+                            fcls = ff.get_attribute("class") or ""
+                            print(f"    iframe[{idx}] src={fsrc[:120]} id={fid[:40]} class={fcls[:40]}")
+                    except Exception as e:
+                        print(f"  - iframe 诊断失败: {e}")
                     frame = _find_turnstile_frame(driver)
                     if not frame:
                         print("  - 未找到 Turnstile iframe")
