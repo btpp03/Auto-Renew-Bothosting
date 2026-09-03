@@ -399,14 +399,27 @@ def main():
             print(f"⚠️ 获取出口 IP 失败: {e}")
 
         print("🚀 启动浏览器...")
-        sb.open("https://bot-hosting.net/")
-        sb.wait_for_ready_state_complete()
-        sb.sleep(2)
+        # 确保停留在 bot-hosting.net 域后再注入 cookie（避免被重定向到 CF/其它域时 invalid cookie domain）
+        for _try in range(4):
+            try:
+                sb.open("https://bot-hosting.net/")
+                sb.wait_for_ready_state_complete()
+                sb.sleep(2)
+                cur = sb.get_current_url() or ""
+                if "bot-hosting.net" in cur:
+                    break
+                print(f"⚠️ 首访被重定向到: {cur}，重试导航...")
+            except Exception as e:
+                print(f"⚠️ 导航异常(第{_try+1}次): {e}")
+                sb.sleep(2)
 
         print("📝 注入 Cookie...")
         for name, value in COOKIES.items():
             if value:
-                sb.add_cookie({"name": name, "value": value, "domain": "bot-hosting.net"})
+                try:
+                    sb.add_cookie({"name": name, "value": value, "domain": "bot-hosting.net"})
+                except Exception as e:
+                    print(f"⚠️ 注入 cookie {name} 失败: {e}")
 
         print("🌐 访问 https://bot-hosting.net/a/billings ...")
         sb.open("https://bot-hosting.net/a/billings")
