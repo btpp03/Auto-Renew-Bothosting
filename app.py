@@ -515,31 +515,35 @@ def main():
                     try:
                         js_click = """
                             (function(){
-                              function findClickable(root){
-                                // 遍历所有元素，含递归 shadow root
-                                const stack = [root];
-                                while(stack.length){
-                                  const el = stack.pop();
-                                  if(!el) continue;
-                                  const tn = (el.tagName||'').toLowerCase();
-                                  if(tn==='iframe'){
-                                    const s=(el.getAttribute('src')||'').toLowerCase();
-                                    if(s.indexOf('challenges.cloudflare.com')>=0||s.indexOf('turnstile')>=0||s.indexOf('captcha')>=0||s.indexOf('challenge')>=0){
-                                      try{ if(el.contentWindow && el.contentWindow.document){ return el; } }catch(e){}
-                                    }
+                              function isTarget(el){
+                                try{
+                                  var tag=(el.tagName||'').toLowerCase();
+                                  if(tag==='iframe'){
+                                    var s=(el.getAttribute('src')||'').toLowerCase();
+                                    if(s.indexOf('challenges.cloudflare.com')>=0||s.indexOf('turnstile')>=0||s.indexOf('captcha')>=0||s.indexOf('challenge')>=0) return true;
                                   }
-                                  // 复选框直接点
-                                  if((tn==='input'&&el.type==='checkbox')||el.getAttribute('role')==='checkbox'||tn==='button'){
-                                    return el;
-                                  }
-                                  if(el.shadowRoot) stack.push(el.shadowRoot);
-                                  const kids = el.children || el.querySelectorAll('*');
-                                  for(let i=kids.length-1;i>=0;i--){ stack.push(kids[i]); }
-                                }
-                                return null;
+                                  if(tag==='input'&&el.type==='checkbox') return true;
+                                  if(el.getAttribute&&el.getAttribute('role')==='checkbox') return true;
+                                  if(tag==='button') return true;
+                                }catch(e){}
+                                return false;
                               }
-                              const t = findClickable(document);
-                              if(t){ t.click(); window.__ct_clicked=true; }
+                              function doClick(el){ try{ el.click(); }catch(e){} }
+                              function walk(root){
+                                try{
+                                  if(!root) return false;
+                                  if(root.nodeType===1){
+                                    if(isTarget(root)){ doClick(root); return true; }
+                                    if(root.shadowRoot&&walk(root.shadowRoot)) return true;
+                                  }
+                                  var kids=(root.children)?root.children:null;
+                                  if(kids){
+                                    for(var i=0;i<kids.length;i++){ if(walk(kids[i])) return true; }
+                                  }
+                                }catch(e){}
+                                return false;
+                              }
+                              walk(document);
                             })();
                         """
                         driver.execute_script(js_click)
