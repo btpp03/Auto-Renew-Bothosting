@@ -408,13 +408,59 @@ def main():
                 send_telegram_message(format_notification("❌ 续期失败", error="点击外部续期按钮出错"))
                 return
 
-            # 处理弹窗中的 Turnstile：以“Renew for 4 days”按钮由禁用变启用为唯一可靠信号。
-            # Turnstile 真正通过后平台会自动解锁续期按钮，因此直接等按钮解锁，
-            # 不再依赖 iframe 文案或主文档文字消失等不可靠判断。
+            # 处理弹窗中的 Turnstile。关键：弃用 sb.uc_gui_click_captcha()（该像素级方法在
+            # Xvfb 环境下会导致 Chrome 会话崩溃）。改为直接定位 Turnstile iframe 并点击其
+            # 内的复选框（Bot-hosting 的 Turnstile 是"点击即过"的基础型，无图片挑战）。
+            from selenium.webdriver.common.by import By as _By
+
+            def _find_turnstile_frame(driver):
+                try:
+                    for f in driver.find_elements(_By.TAG_NAME, "iframe"):
+                        src = (f.get_attribute("src") or "").lower()
+                        if "challenges.cloudflare.com" in src or "turnstile" in src:
+                            return f
+                except Exception:
+                    pass
+                return None
+
+            def _click_turnstile_checkbox(sb):
+                """切进 Turnstile iframe 点击复选框，成功返回 True。"""
+                try:
+                    driver = sb.driver
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    frame = _find_turnstile_frame(driver)
+                    if not frame:
+                        print("  - 未找到 Turnstile iframe")
+                        return False
+                    driver.switch_to.frame(frame)
+                    sb.sleep(1)
+                    clicked = False
+                    sel = '[role="checkbox"], input[type="checkbox"], .challenge-container, .ctp-checkbox-label, #challenge-stage input'
+                    els = driver.find_elements(_By.CSS_SELECTOR, sel)
+                    for el in els:
+                        try:
+                            el.click()
+                            clicked = True
+                            print("  - 已点击 Turnstile iframe 内复选框")
+                            break
+                        except Exception:
+                            continue
+                    driver.switch_to.default_content()
+                    return clicked
+                except Exception as e:
+                    print(f"  - iframe 点击异常: {e}")
+                    try:
+                        sb.driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    return False
+
             print("🔒 检测弹窗中的 Turnstile 验证...")
             button_ready = False
-            # 减少点击次数以降低 Chrome 崩溃概率；每次点击后 dump DOM 用于诊断按钮位置
-            for attempt in range(1, 3):
+            for attempt in range(1, 5):
                 state = get_renew_button_state(sb)
                 if state.get("exists") and not state.get("disabled"):
                     button_ready = True
@@ -422,28 +468,11 @@ def main():
                     break
 
                 try:
-                    print(f"🖱️ 第 {attempt}/2 次尝试点击 Turnstile...")
-                    sb.uc_gui_click_captcha()
-                    sb.sleep(3)
+                    print(f"🖱️ 第 {attempt}/4 次尝试点击 Turnstile 复选框...")
+                    _click_turnstile_checkbox(sb)
+                    sb.sleep(2)
                 except Exception as e:
                     print(f"⚠️ 点击 Turnstile 出错: {e}")
-
-                # 点击后先 dump 当前 DOM（此时 Chrome 应仍存活），再轮询按钮
-                print("📦 Turnstile 点击后 dump 主文档 DOM 用于诊断...")
-                try:
-                    import os as _os
-                    _os.makedirs("debug_dom", exist_ok=True)
-                    driver = sb.driver
-                    try:
-                        driver.switch_to.default_content()
-                    except Exception:
-                        pass
-                    src = driver.page_source or ""
-                    with open("debug_dom/after_turnstile.html", "w", encoding="utf-8") as f:
-                        f.write(src)
-                    print(f"📦 after_turnstile.html 大小: {len(src)}; iframe数: {src.count('<iframe')}; 'Renew for 4 days'出现: {src.count('Renew for 4 days')}; 'Renew'出现: {src.count('Renew')}")
-                except Exception as e:
-                    print(f"⚠️ Turnstile 后 dump 失败: {e}")
 
                 unlocked = False
                 for wait_round in range(1, 16):
@@ -463,7 +492,6 @@ def main():
             if not button_ready:
                 sb.save_screenshot("renew_result.png")
                 feedback = get_page_feedback(sb)
-                dump_dom_for_debug(sb)
                 print("❌ Turnstile 验证最终未通过，脚本退出")
                 send_telegram_photo(
                     format_notification(
