@@ -174,15 +174,31 @@ def wait_for_turnstile_pass(sb, timeout=30):
 
 
 def get_renew_button_state(sb):
-    """返回弹窗续期按钮的存在/禁用状态（原生 API，不用 execute_script）。"""
-    sel = 'button:contains("Renew for 4 days")'
+    """返回弹窗续期按钮的存在/禁用状态（XPath 定位，最可靠）。"""
+    from selenium.webdriver.common.by import By
+    xpaths = [
+        '//button[contains(., "Renew for 4 days")]',
+        '//button[contains(text(), "Renew for")]',
+        "//button[contains(., 'Renew') and contains(., 'days')]",
+    ]
     try:
-        if sb.is_element_visible(sel):
-            disabled = sb.get_attribute(sel, "disabled") or sb.get_attribute(sel, "aria-disabled")
-            text = (sb.get_text(sel) or "").strip()
-            return {"exists": True, "disabled": bool(disabled) or disabled == "true", "text": text}
-    except Exception:
-        pass
+        driver = sb.driver
+        for xp in xpaths:
+            try:
+                els = driver.find_elements(By.XPATH, xp)
+            except Exception:
+                continue
+            if els:
+                el = els[0]
+                disabled = el.get_attribute("disabled") or el.get_attribute("aria-disabled")
+                text = (el.text or "").strip()
+                return {
+                    "exists": True,
+                    "disabled": bool(disabled) or disabled == "true" or disabled == "disabled",
+                    "text": text,
+                }
+    except Exception as e:
+        print(f"⚠️ 读取续期按钮状态失败: {e}")
     return {"exists": False, "disabled": True, "text": ""}
 
 
@@ -402,7 +418,7 @@ def main():
             modal_button_clicked = False
             try:
                 sb.save_screenshot("renew_before_submit.png")
-                sb.click('button:contains("Renew for 4 days")', timeout=8)
+                sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
                 modal_button_clicked = True
                 print("✅ 已点击启用状态的续期按钮")
             except Exception as e:
