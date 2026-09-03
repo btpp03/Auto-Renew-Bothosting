@@ -29,6 +29,23 @@ COOKIES = {
     "username": USERNAME,
 }
 
+# 通过 JS 直接点击弹窗里的续期按钮（返回 'clicked:<text>' 或 'notfound'）
+# 用于 uc_gui_click_captcha 之后 Selenium 查找失效但页面本身正常的场景。
+JS_CLICK_RENEW = """
+(function(){
+  var btns = document.querySelectorAll('button');
+  for (var i=0;i<btns.length;i++){
+    var t = (btns[i].textContent||'').replace(/\\s+/g,' ').trim();
+    if (t.indexOf('Renew for')>=0 && t.indexOf('days')>=0){
+      var dis = btns[i].disabled || (btns[i].getAttribute('aria-disabled')==='true');
+      if (!dis){ btns[i].click(); return 'clicked:'+t; }
+      return 'disabled:'+t;
+    }
+  }
+  return 'notfound';
+})();
+"""
+
 # 获取cookie到期时间
 def get_cookie_info(sb, name):
     cookies = sb.get_cookies()
@@ -698,6 +715,24 @@ def main():
                         break
                     if wait_round in (1, 5, 10, 15):
                         print(f"⏳ 等待按钮启用中（{wait_round}/15）: exists={state.get('exists')} disabled={state.get('disabled')}")
+                # 第 4 次(uc_gui_click_captcha)后 Selenium 查找常失效(driver 半死)，但页面本身正常、
+                # 按钮已变绿(截图佐证)。因此 UC 点击后额外用 JS 直接点续期按钮，若点中即视为通过。
+                if attempt >= 4 and not unlocked:
+                    clicked_by_js = False
+                    for _j in range(3):
+                        sb.sleep(2)
+                        try:
+                            r = sb.execute_script(JS_CLICK_RENEW)
+                            print(f"  🎯 JS 点击续期按钮结果: {r}")
+                            if r and "clicked" in str(r):
+                                clicked_by_js = True
+                                button_ready = True
+                                print("✅ 已通过 JS 点击启用状态的续期按钮")
+                                break
+                        except Exception as e:
+                            print(f"  ⚠️ JS 点击续期按钮异常: {e}")
+                    if clicked_by_js:
+                        break
                 if unlocked:
                     break
                 print(f"⏳ 第 {attempt} 次点击后按钮仍未启用，准备重试...")
@@ -736,9 +771,22 @@ def main():
                 except Exception:
                     pass
                 sb.save_screenshot("renew_before_submit.png")
-                sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
-                modal_button_clicked = True
-                print("✅ 已点击启用状态的续期按钮")
+                try:
+                    sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
+                    modal_button_clicked = True
+                    print("✅ 已点击启用状态的续期按钮 (Selenium)")
+                except Exception as se:
+                    # Selenium 点击失败(可能 driver 半死)，回退 JS 直接点击
+                    print(f"⚠️ Selenium 点击失败({str(se)[:80]})，改用 JS 点击...")
+                    try:
+                        sb.driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    r = sb.execute_script(JS_CLICK_RENEW)
+                    print(f"  🎯 JS 点击续期按钮: {r}")
+                    if r and "clicked" in str(r):
+                        modal_button_clicked = True
+                        print("✅ 已通过 JS 点击续期按钮")
             except Exception as e:
                 print(f"❌ 续期按钮点击失败: {e}")
 
