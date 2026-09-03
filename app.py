@@ -638,6 +638,30 @@ def main():
                     return False
 
             print("🔒 检测弹窗中的 Turnstile 验证...")
+            # CDP 诊断：列出所有 frame 树，定位 Turnstile iframe 真实位置
+            try:
+                driver = sb.driver
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+                def _walk_frames(node, depth=0):
+                    try:
+                        print(f"  {'  '*depth}frame: {node.get('url','')[:110]}")
+                    except Exception:
+                        pass
+                    for c in (node.get('childFrames') or []):
+                        _walk_frames(c, depth+1)
+                tree = driver.execute_cdp_cmd("Page.getFrameTree", {})
+                print("🔎 CDP FrameTree:")
+                _walk_frames(tree.get('frameTree', {}))
+                # 列出主文档直接 iframe 数量与 src
+                iframes = driver.find_elements(_By.TAG_NAME, "iframe")
+                print(f"🔎 Selenium 主文档可见 iframe 数: {len(iframes)}")
+                for i2, f2 in enumerate(iframes):
+                    print(f"   iframe[{i2}] src={(f2.get_attribute('src') or '')[:110]}")
+            except Exception as e:
+                print(f"🔎 CDP 诊断不可用: {type(e).__name__}: {str(e)[:120]}")
             button_ready = False
             for attempt in range(1, 5):
                 state = get_renew_button_state(sb)
