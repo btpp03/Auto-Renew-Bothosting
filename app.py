@@ -174,34 +174,96 @@ def wait_for_turnstile_pass(sb, timeout=30):
 
 
 def get_renew_button_state(sb):
-    """返回弹窗续期按钮的存在/禁用状态（XPath 定位，最可靠）。"""
+    """返回弹窗续期按钮的存在/禁用状态。
+
+    扫描所有打开窗口与（主文档）frame，找到含续期按钮的那个上下文并切换过去，
+    避免 driver 焦点停留在错误窗口/iframe 导致检测不到按钮。
+    """
     from selenium.webdriver.common.by import By
     xpaths = [
         '//button[contains(., "Renew for 4 days")]',
-        '//button[contains(text(), "Renew for")]',
+        '//button[contains(., "Renew for")]',
         "//button[contains(., 'Renew') and contains(., 'days')]",
     ]
     try:
         driver = sb.driver
-        # 确保回到主文档：uc_gui_click_captcha 可能把焦点切进 Turnstile iframe
+        original_handle = None
         try:
-            driver.switch_to.default_content()
+            original_handle = driver.current_window_handle
         except Exception:
             pass
-        for xp in xpaths:
+
+        def _check_current():
+            """在当前 window 的主文档中查找按钮，返回状态 dict 或 None。"""
             try:
-                els = driver.find_elements(By.XPATH, xp)
+                driver.switch_to.default_content()
             except Exception:
-                continue
-            if els:
-                el = els[0]
-                disabled = el.get_attribute("disabled") or el.get_attribute("aria-disabled")
-                text = (el.text or "").strip()
-                return {
-                    "exists": True,
-                    "disabled": bool(disabled) or disabled == "true" or disabled == "disabled",
-                    "text": text,
-                }
+                pass
+            for xp in xpaths:
+                try:
+                    els = driver.find_elements(By.XPATH, xp)
+                except Exception:
+                    continue
+                if els:
+                    el = els[0]
+                    disabled = el.get_attribute("disabled") or el.get_attribute("aria-disabled")
+                    text = (el.text or "").strip()
+                    return {
+                        "exists": True,
+                        "disabled": bool(disabled) or disabled == "true" or disabled == "disabled",
+                        "text": text,
+                    }
+            return None
+
+        # 1) 先在当前窗口主文档找
+        st = _check_current()
+        if st:
+            return st
+
+        # 2) 当前窗口可能因 uc_gui_click_captcha 焦点跑进 iframe 内嵌文档，尝试逐 iframe 找
+        try:
+            driver.switch_to.default_content()
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for f in iframes:
+                try:
+                    driver.switch_to.frame(f)
+                    st = _check_current()
+                    if st:
+                        driver.switch_to.default_content()
+                        return st
+                    driver.switch_to.default_content()
+                except Exception:
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # 3) 扫描其它窗口
+        try:
+            handles = driver.window_handles
+            for h in handles:
+                if h == original_handle:
+                    continue
+                try:
+                    driver.switch_to.window(h)
+                except Exception:
+                    continue
+                st = _check_current()
+                if st:
+                    # 切到含按钮的窗口后保持在那里，供后续点击使用
+                    print(f"ℹ️ 在另一窗口找到续期按钮（共 {len(handles)} 个窗口）")
+                    return st
+        except Exception:
+            pass
+
+        # 恢复原始窗口（若切换过且未找到）
+        if original_handle:
+            try:
+                driver.switch_to.window(original_handle)
+            except Exception:
+                pass
     except Exception as e:
         print(f"⚠️ 读取续期按钮状态失败: {e}")
     return {"exists": False, "disabled": True, "text": ""}
@@ -619,6 +681,18 @@ def main():
             if not button_ready:
                 sb.save_screenshot("renew_result.png")
                 feedback = get_page_feedback(sb)
+                # 诊断：打印窗口数辅助判断是否窗口错位
+                try:
+                    wh = sb.driver.window_handles
+                    print(f"🔎 当前窗口数: {len(wh)}; 各窗口 URL:")
+                    for wi, h in enumerate(wh):
+                        try:
+                            sb.driver.switch_to.window(h)
+                            print(f"  window[{wi}] url={sb.driver.current_url}")
+                        except Exception:
+                            print(f"  window[{wi}] <无法读取>")
+                except Exception as e:
+                    print(f"🔎 窗口诊断失败: {e}")
                 print("❌ Turnstile 验证最终未通过，脚本退出")
                 send_telegram_photo(
                     format_notification(
