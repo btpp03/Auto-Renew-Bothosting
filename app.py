@@ -478,12 +478,21 @@ def main():
             try:
                 if sb.is_element_visible(selector):
                     button_text = sb.get_text(selector)
+                    low = button_text.lower()
                     if "Renew in" in button_text:
                         match = re.search(r"Renew in (\d{2}:\d{2}:\d{2})", button_text)
                         if match:
                             countdown_text = match.group(1)
                         break
-                    elif "Renew" in button_text and "in" not in button_text.lower():
+                    elif "cooldown" in low:
+                        # 站点现在用 "Renewal cooldown HH:MM:SS" 表示冷却中——这不是"可用"，
+                        # 之前被误判成可用按钮，导致死磕 Turnstile 并误报失败。
+                        match = re.search(r"(\d{2}:\d{2}:\d{2})", button_text)
+                        if match:
+                            countdown_text = match.group(1)
+                        print(f"⏳ 续期冷却中: '{button_text}'")
+                        break
+                    elif "Renew" in button_text and "in" not in low:
                         outer_renew_selector = selector
                         print(f"✅ 续期按钮可用: '{button_text}'")
                         break
