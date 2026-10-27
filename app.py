@@ -689,6 +689,104 @@ def main():
                         d.switch_to.default_content()
                     except Exception:
                         pass
+
+                    def _pierce_find_ts(driver):
+                        """用 CDP DOM.getDocument(pierce=True) 穿透 closed shadow DOM 找
+                        Turnstile iframe（JS querySelectorAll 看不到 closed shadow root）。"""
+                        try:
+                            doc = driver.execute_cdp_cmd(
+                                "DOM.getDocument", {"depth": -1, "pierce": True})
+                        except Exception as _e:
+                            print(f"  - CDP DOM.getDocument 失败: {_e}")
+                            return None
+                        stack = [doc.get("root")]
+                        seen = 0
+                        others = []
+                        while stack:
+                            n = stack.pop()
+                            if not n:
+                                continue
+                            seen += 1
+                            name = (n.get("nodeName") or "").upper()
+                            if name == "IFRAME":
+                                attrs = n.get("attributes") or []
+                                ad = {}
+                                for _i in range(0, len(attrs) - 1, 2):
+                                    ad[attrs[_i]] = attrs[_i + 1]
+                                src = (ad.get("src") or "").lower()
+                                title = (ad.get("title") or "").lower()
+                                if ("challenges.cloudflare.com" in src
+                                        or "turnstile" in src
+                                        or "turnstile" in title
+                                        or "captcha" in title):
+                                    print(f"  - CDP 找到 Turnstile iframe "
+                                          f"src={src[:90]} title={title[:40]} "
+                                          f"nodeId={n.get('nodeId')}")
+                                    return n
+                                others.append(src[:70])
+                            for _k in ("children", "shadowRoots"):
+                                for _c in n.get(_k) or []:
+                                    stack.append(_c)
+                            _cd = n.get("contentDocument")
+                            if _cd:
+                                stack.append(_cd)
+                        print(f"  - CDP pierce 扫描 {seen} 节点未命中；其它 iframe: {others[:6]}")
+                        return None
+
+                    node = _pierce_find_ts(d)
+                    if node:
+                        nid = node.get("nodeId")
+                        quad = None
+                        try:
+                            d.execute_cdp_cmd("DOM.scrollIntoViewIfNeeded", {"nodeId": nid})
+                            sb.sleep(0.6)
+                        except Exception:
+                            pass
+                        try:
+                            q = d.execute_cdp_cmd("DOM.getContentQuads", {"nodeId": nid})
+                            quads = q.get("quads") or []
+                            if quads:
+                                quad = quads[0]
+                        except Exception as _e:
+                            print(f"  - DOM.getContentQuads 失败: {_e}")
+                        if quad is None:
+                            try:
+                                bm = d.execute_cdp_cmd("DOM.getBoxModel", {"nodeId": nid})
+                                quad = bm["model"]["border"]
+                            except Exception as _e:
+                                print(f"  - DOM.getBoxModel 失败: {_e}")
+                        if quad:
+                            xs = [quad[0], quad[2], quad[4], quad[6]]
+                            ys = [quad[1], quad[3], quad[5], quad[7]]
+                            left, right = min(xs), max(xs)
+                            top, bottom = min(ys), max(ys)
+                            x = left + min(32.0, max(12.0, (right - left) / 2.0))
+                            y = (top + bottom) / 2.0
+                            print(f"  - CDP: quad=({left:.0f},{top:.0f})-({right:.0f},{bottom:.0f})"
+                                  f" → click ({x:.0f},{y:.0f})")
+                            d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                              {"type": "mouseMoved", "x": x, "y": y, "buttons": 0})
+                            sb.sleep(0.15)
+                            d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                              {"type": "mousePressed", "x": x, "y": y,
+                                               "button": "left", "buttons": 1, "clickCount": 1})
+                            sb.sleep(0.1)
+                            d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                              {"type": "mouseReleased", "x": x, "y": y,
+                                               "button": "left", "buttons": 0, "clickCount": 1})
+                            print("  - CDP 真实鼠标点击已发送")
+                            sb.sleep(3)
+                            try:
+                                tok = sb.get_attribute(
+                                    'input[name="cf-turnstile-response"]', "value") or ""
+                            except Exception:
+                                tok = ""
+                            if len(tok.strip()) >= 20:
+                                print(f"  - CDP 点击后 token 已签发（长度 {len(tok.strip())}）")
+                            return True
+                        else:
+                            print("  - CDP: 拿到 iframe 但无 box model，回退几何兜底")
+
                     js_rect = """
                         (function(){
                           var found=null;
