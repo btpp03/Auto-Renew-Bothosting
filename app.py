@@ -677,6 +677,95 @@ def main():
                     print(f"  - Turnstile 点击整体异常: {e}")
                     return False
 
+            def _cdp_click_turnstile(sb):
+                """用 CDP 真实鼠标事件点击 Turnstile 复选框。
+                Turnstile 复选框在 cross-origin/closed-shadow iframe 内，JS .click() 不产生
+                真实用户输入，所以 token 不会签发；而 CDP Input.dispatchMouseEvent 是浏览器
+                层面的真实鼠标事件，可以正常触发。"""
+                import json as _json
+                try:
+                    d = sb.driver
+                    try:
+                        d.switch_to.default_content()
+                    except Exception:
+                        pass
+                    js_rect = """
+                        (function(){
+                          var found=null;
+                          function isTS(el){
+                            try{
+                              if(!el||!el.tagName) return false;
+                              if(el.tagName.toLowerCase()!=='iframe') return false;
+                              var s=(el.getAttribute('src')||'').toLowerCase();
+                              return s.indexOf('challenges.cloudflare.com')>=0 || s.indexOf('turnstile')>=0;
+                            }catch(e){ return false; }
+                          }
+                          function scan(root){
+                            try{
+                              var ifs = root.querySelectorAll ? root.querySelectorAll('iframe') : [];
+                              for(var i=0;i<ifs.length;i++){ if(isTS(ifs[i])){ found=ifs[i]; return true; } }
+                              var all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+                              for(var j=0;j<all.length;j++){
+                                var el=all[j];
+                                try{ if(el.shadowRoot && scan(el.shadowRoot)) return true; }catch(e){}
+                              }
+                            }catch(e){}
+                            return false;
+                          }
+                          scan(document);
+                          if(!found){
+                            document.documentElement.setAttribute('data-tsrect','none');
+                          } else {
+                            try{ found.scrollIntoView({block:'center', inline:'center'}); }catch(e){}
+                            var r=found.getBoundingClientRect();
+                            document.documentElement.setAttribute('data-tsrect', JSON.stringify({
+                              x:r.left, y:r.top, w:r.width, h:r.height
+                            }));
+                          }
+                        })();
+                    """
+                    d.execute_script(js_rect)
+                    sb.sleep(0.5)
+                    raw = None
+                    try:
+                        raw = d.find_element(_By.TAG_NAME, "html").get_attribute("data-tsrect")
+                    except Exception:
+                        raw = None
+                    if not raw or raw == "none":
+                        print("  - CDP: 未找到 Turnstile iframe")
+                        return False
+                    r = _json.loads(raw)
+                    if not r.get("w") or not r.get("h"):
+                        print(f"  - CDP: iframe 尺寸异常 {r}")
+                        return False
+                    # 复选框位于 iframe 左上角约 (30, h/2) 处
+                    x = r["x"] + min(32.0, r["w"] / 2.0)
+                    y = r["y"] + r["h"] / 2.0
+                    print(f"  - CDP: iframe rect x={r['x']:.0f} y={r['y']:.0f} "
+                          f"w={r['w']:.0f} h={r['h']:.0f} → click ({x:.0f},{y:.0f})")
+                    d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                      {"type": "mouseMoved", "x": x, "y": y, "buttons": 0})
+                    sb.sleep(0.15)
+                    d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                      {"type": "mousePressed", "x": x, "y": y,
+                                       "button": "left", "buttons": 1, "clickCount": 1})
+                    sb.sleep(0.1)
+                    d.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                      {"type": "mouseReleased", "x": x, "y": y,
+                                       "button": "left", "buttons": 0, "clickCount": 1})
+                    print("  - CDP 真实鼠标点击已发送")
+                    sb.sleep(3)
+                    try:
+                        tok = sb.get_attribute('input[name="cf-turnstile-response"]', "value") or ""
+                    except Exception:
+                        tok = ""
+                    if len(tok.strip()) >= 20:
+                        print(f"  - CDP 点击后 token 已签发（长度 {len(tok.strip())}）")
+                    return True
+                except Exception as e:
+                    print(f"  - CDP 点击异常: {e}")
+                    return False
+
             print("🔒 检测弹窗中的 Turnstile 验证...")
             # 关键：点击外部按钮后弹窗与 Turnstile iframe 是异步加载的，必须先等待 iframe
             # 出现（这是弹窗加载完成的标志），再尝试点击，否则所有操作都会落空。
@@ -710,7 +799,9 @@ def main():
                             print(f"  - uc_gui_click_captcha 异常: {e}")
                         sb.sleep(4)
                     else:
-                        _click_turnstile_checkbox(sb)
+                        # 优先 CDP 真实鼠标事件（Turnstile 只认真实输入），失败再回退 JS 点击
+                        if not _cdp_click_turnstile(sb):
+                            _click_turnstile_checkbox(sb)
                         sb.sleep(2)
                 except Exception as e:
                     print(f"⚠️ 点击 Turnstile 出错: {e}")
