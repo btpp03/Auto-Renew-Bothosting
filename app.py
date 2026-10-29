@@ -34,7 +34,9 @@ COOKIES = {
 # 用于 uc_gui_click_captcha 之后 Selenium 查找失效但页面本身正常的场景。
 JS_CLICK_RENEW = """
 (function(){
-  var btns = document.querySelectorAll('button');
+  // 优先弹窗内的续期按钮；页面外卡片上那个点了只会重新打开弹窗
+  var scope = document.querySelector('[role="dialog"]') || document;
+  var btns = scope.querySelectorAll('button');
   for (var i=0;i<btns.length;i++){
     var t = (btns[i].textContent||'').replace(/\\s+/g,' ').trim();
     if (t.indexOf('Renew for')>=0 && t.indexOf('days')>=0){
@@ -212,26 +214,73 @@ def get_renew_button_state(sb):
             pass
 
         def _check_current():
-            """在当前 window 的主文档中查找按钮，返回状态 dict 或 None。"""
+            """在当前 window 的主文档中查找按钮，返回状态 dict 或 None。
+
+            注意：页面里有两处 "Renew for 4 days" —— 弹窗外那张卡片上的（始终可用，
+            点它只会重新打开弹窗）和弹窗内的（Turnstile 通过后才解锁）。必须先找
+            [role="dialog"] 内的按钮，否则会误判「已可用」去点外面那个，续期不会发生。
+            """
             try:
                 driver.switch_to.default_content()
             except Exception:
                 pass
-            for xp in xpaths:
+            dialog_xpaths = [
+                '//*[@role="dialog"]//button[contains(., "Renew for")]',
+                '//*[@role="dialog"]//button[contains(., "Renew")]',
+            ]
+            global_xpaths = [
+                '//button[contains(., "Renew for 4 days")]',
+                '//button[contains(., "Renew for")]',
+                "//button[contains(., 'Renew') and contains(., 'days')]",
+            ]
+            el = None
+            in_dialog = False
+            for xp in dialog_xpaths:
                 try:
                     els = driver.find_elements(By.XPATH, xp)
                 except Exception:
-                    continue
+                    els = []
                 if els:
                     el = els[0]
-                    disabled = el.get_attribute("disabled") or el.get_attribute("aria-disabled")
-                    text = (el.text or "").strip()
-                    return {
-                        "exists": True,
-                        "disabled": bool(disabled) or disabled == "true" or disabled == "disabled",
-                        "text": text,
-                    }
-            return None
+                    in_dialog = True
+                    break
+            if el is None:
+                for xp in global_xpaths:
+                    try:
+                        els = driver.find_elements(By.XPATH, xp)
+                    except Exception:
+                        continue
+                    if els:
+                        el = els[0]
+                        break
+            if el is None:
+                return None
+            disabled_attr = el.get_attribute("disabled") or el.get_attribute("aria-disabled")
+            text = (el.text or "").strip()
+            # 弹窗里出现 "Complete the bot check" 提示 = 按钮仍锁定
+            locked_hint = False
+            try:
+                locked_hint = bool(driver.find_elements(
+                    By.XPATH, '//*[contains(text(), "Complete the bot check")]'))
+            except Exception:
+                pass
+            # 若弹窗已打开，但按钮在弹窗外，说明弹窗内的按钮还没渲染出来，视为未就绪
+            dialog_open = False
+            try:
+                dialog_open = bool(driver.find_elements(By.XPATH, '//*[@role="dialog"]'))
+            except Exception:
+                pass
+            disabled = (bool(disabled_attr)
+                        or disabled_attr == "true"
+                        or disabled_attr == "disabled"
+                        or locked_hint
+                        or (dialog_open and not in_dialog))
+            return {
+                "exists": True,
+                "disabled": disabled,
+                "text": text if in_dialog else f"{text}(弹窗外)",
+            }
+
 
         # 1) 先在当前窗口主文档找
         st = _check_current()
@@ -975,9 +1024,14 @@ def main():
                         pass
                     sb.save_screenshot("renew_before_submit.png")
                     try:
-                        sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
+                        # 必须点弹窗内的按钮（外面卡片上那个只是重新打开弹窗）
+                        try:
+                            sb.click('//*[@role="dialog"]//button[contains(., "Renew for")]', timeout=8)
+                            print("✅ 已点击弹窗内续期按钮 (Selenium)")
+                        except Exception:
+                            sb.click('//button[contains(., "Renew for 4 days")]', timeout=8)
+                            print("✅ 已点击启用状态的续期按钮 (Selenium)")
                         modal_button_clicked = True
-                        print("✅ 已点击启用状态的续期按钮 (Selenium)")
                     except Exception as se:
                         # Selenium 点击失败(可能 driver 半死)，回退 JS 直接点击
                         print(f"⚠️ Selenium 点击失败({str(se)[:80]})，改用 JS 点击...")
