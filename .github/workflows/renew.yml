@@ -69,15 +69,25 @@ jobs:
         run: |
           xvfb-run --auto-servernum python3 app.py
 
+      - name: 🔁 账号2 自动重新授权 (Discord token → 新 session_token)
+        continue-on-error: true
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN_2 }}
+          SECRET_NAME: SESSION_TOKEN_2
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          if [ -z "$DISCORD_TOKEN" ]; then echo "未配置 DISCORD_TOKEN_2，跳过"; exit 0; fi
+          python3 bhauth.py
+
       - name: 🚀 运行续期脚本 (账号2)
         continue-on-error: true
         env:
           EMAIL: ${{ secrets.EMAIL_2 }}
-          USER_ID: ${{ secrets.USER_ID_2 }}
-          USERNAME: ${{ secrets.USERNAME_2 }}
+          USER_ID: ${{ env.USER_ID != '' && env.USER_ID || secrets.USER_ID_2 }}
+          USERNAME: ${{ env.USERNAME != '' && env.USERNAME || secrets.USERNAME_2 }}
           SECRET_NAME: SESSION_TOKEN_2
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          SESSION_TOKEN: ${{ secrets.SESSION_TOKEN_2 }}
+          SESSION_TOKEN: ${{ env.SESSION_TOKEN != '' && env.SESSION_TOKEN || secrets.SESSION_TOKEN_2 }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
