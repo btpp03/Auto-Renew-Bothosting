@@ -424,12 +424,17 @@ def extract_expiry_date(page_source: str) -> str:
         r"[Ee]xpires\s*[:\-]?\s*(\d{2}/\d{2}/\d{4})",   # Expires 07/07/2026 (MM/DD/YYYY)
         r"(\d{4}/\d{2}/\d{2})\s*[\-–]\s*renew",        # 2026/07/07 - renew
         r"(\d{2}/\d{2}/\d{4})\s*[\-–]\s*renew",        # 07/07/2026 - renew
+        r"[Ee]xpires\s+(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})",        # Expires 16 Nov 2026
+        r"[Ee]xpires\s+([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})",      # Expires Nov 16, 2026
+        r"RenewalDueAt\"?\s*:\s*\"?(\d{4}-\d{2}-\d{2})",        # RenewalDueAt:"2026-11-16T..."
     ]
     for pattern in patterns:
         match = re.search(pattern, page_source)
         if match:
             date_str = match.group(1)
             # 如果是 MM/DD/YYYY 格式，转换为 YYYY/MM/DD
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+                return date_str.replace("-", "/")
             if len(date_str.split('/')[-1]) == 4:  # 年份长度4
                 parts = date_str.split('/')
                 if len(parts[0]) == 2:  # 第一部分是2位（月）
@@ -1068,9 +1073,10 @@ def main():
                     print(f"⚠️ 读取页面源码失败(第{observe_round}轮): {str(e)[:80]}")
                     continue
                 new_expiry = extract_expiry_date(page_text)
-                new_match = re.search(r"Renew in (\d{1,3}:\d{2}:\d{2})", page_text)
+                new_match = re.search(r"(?:Renew in|Renewal cooldown)\s*:?\s*(\d{1,3}:\d{2}:\d{2})", page_text, re.I)
                 success_hint = re.search(
-                    r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete",
+                    r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete"
+                    r"|renewed\s+for\s+\d+\s*days?",
                     page_text, re.I,
                 )
                 try:
@@ -1078,6 +1084,8 @@ def main():
                     if feedback and feedback != last_feedback:
                         last_feedback = feedback
                         print(f"📣 页面反馈: {feedback}")
+                    if feedback and re.search(r"renewed\s+for\s+\d+\s*days?", feedback, re.I):
+                        success_hint = success_hint or re.search(r".", "x")
                 except Exception as fe:
                     pass
                 if new_expiry and new_expiry != current_expiry:
@@ -1113,15 +1121,18 @@ def main():
                         print(f"⚠️ 刷新后读页面源码失败: {str(e)[:80]}")
                         continue
                     new_expiry = extract_expiry_date(new_page_text)
-                    new_match = re.search(r"Renew in (\d{1,3}:\d{2}:\d{2})", new_page_text)
+                    new_match = re.search(r"(?:Renew in|Renewal cooldown)\s*:?\s*(\d{1,3}:\d{2}:\d{2})", new_page_text, re.I)
                     success_hint = re.search(
-                        r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete",
+                        r"renew(?:al|ed)?\s+(?:was\s+)?successful|successfully\s+renewed|renewal\s+complete"
+                        r"|renewed\s+for\s+\d+\s*days?",
                         new_page_text, re.I,
                     )
                     try:
                         feedback = get_page_feedback(sb)
                         if feedback:
                             last_feedback = feedback
+                        if feedback and re.search(r"renewed\s+for\s+\d+\s*days?", feedback, re.I):
+                            success_hint = success_hint or re.search(r".", "x")
                     except Exception:
                         feedback = None
 
